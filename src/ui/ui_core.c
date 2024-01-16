@@ -115,11 +115,10 @@ ui_nav_eat_action_node(UI_NavActionList *list, UI_NavActionNode *node)
 
 ////////////////////////////////
 //~ rjf: High Level Navigation Action => Text Operations
-
 internal B32
-ui_nav_char_is_scan_boundary(U8 c)
+ui_nav_char_is_code_symbol(U8 c)
 {
-  return char_is_space(c) || char_is_slash(c);
+  return (char_is_alpha(c) || char_is_digit(c, 10) || c == '_');
 }
 
 internal S64
@@ -127,20 +126,26 @@ ui_nav_scanned_column_from_column(String8 string, S64 start_column, Side side)
 {
   S64 new_column = start_column;
   S64 delta = (!!side)*2 - 1;
-  B32 found_boundary = 0;
-  for(S64 col = start_column+delta; 1 <= col && col <= string.size+1; col += delta)
+  B32 found_text = 0;
+  B32 found_non_space = 0;
+  S64 start_off = delta < 0 ? delta : 0;
+  for(S64 col = start_column+start_off; 1 <= col && col <= string.size+1; col += delta)
   {
     U8 byte = (col <= string.size) ? string.str[col-1] : 0;
-    B32 is_boundary = (ui_nav_char_is_scan_boundary(byte) ^ !(side == Side_Max));
-    if((found_boundary && !is_boundary) ||
-       (col == 1 || col == string.size+1))
+    B32 is_non_space = !char_is_space(byte);
+    B32 is_name = ui_nav_char_is_code_symbol(byte);
+    
+    if (((side == Side_Min) && (col == 1)) || 
+        ((side == Side_Max) && (col == string.size+1)) ||
+        (found_non_space && !is_non_space) || 
+        (found_text && !is_name))
     {
-      new_column = col + (!side && col != 1);
+      new_column = col + (!side && col != 1);  
       break;
-    }
-    else if(!found_boundary && is_boundary)
-    {
-      found_boundary = 1;
+    } else if (!found_text && is_name) {
+      found_text = 1;
+    } else if (!found_non_space && is_non_space ) {
+      found_non_space = 1;
     }
   }
   return new_column;
@@ -2568,8 +2573,10 @@ ui_signal_from_box(UI_Box *box)
   }
   
   //- rjf: set hovering status
-  result.hovering = mouse_is_over && (ui_key_match(ui_state->active_box_key[Side_Min], ui_key_zero()) ||
-                                      ui_key_match(ui_state->active_box_key[Side_Min], box->key));
+  result.hovering = mouse_is_over && ((ui_key_match(ui_state->hot_box_key, ui_key_zero()) ||
+                                       ui_key_match(ui_state->hot_box_key, box->key)) &&
+                                      (ui_key_match(ui_state->active_box_key[Side_Min], ui_key_zero()) ||
+                                       ui_key_match(ui_state->active_box_key[Side_Min], box->key)));
   result.mouse_over = mouse_is_over;
   
   //- rjf: clicking in default nav -> set navigation state to this box

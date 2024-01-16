@@ -4989,7 +4989,7 @@ DF_VIEW_UI_FUNCTION_DEF(Code)
   //- rjf: search query -> matches
   //
   DF_TextSearchMatchArray search_query_matches = {0};
-#if !DE2CTRL
+#if 0
   {
     search_query_matches = df_text_search_match_array_from_entity_needle(scratch.arena, entity, search_query, entity_line_string_flags, tv->cursor);
     df_text_search_match_array_sort_in_place(&search_query_matches);
@@ -5153,7 +5153,7 @@ DF_VIEW_UI_FUNCTION_DEF(Code)
   if(txti_buffer_is_ready) UI_Parent(container_box)
   {
     //- rjf: build fractional space
-    container_box->view_off.x = view->scroll_pos.x.idx + view->scroll_pos.x.off;
+    container_box->view_off.x = container_box->view_off_target.x = view->scroll_pos.x.idx + view->scroll_pos.x.off;
     container_box->view_off.y = container_box->view_off_target.y = code_line_height*mod_f32(view->scroll_pos.y.off, 1.f) + code_line_height*(view->scroll_pos.y.off < 0) - code_line_height*(view->scroll_pos.y.off == -1.f && view->scroll_pos.y.idx == 1);
     
     //- rjf: build code slice
@@ -5359,7 +5359,7 @@ DF_VIEW_UI_FUNCTION_DEF(Code)
     if(search_query.size != 0 && next_match.line != 0)
     {
       // TODO(rjf): [ ] @de2ctrl
-#if !DE2CTRL
+#if 0
       DF_TextSlice match_line_slice = df_text_slice_from_entity(scratch.arena, entity, r1s64(next_match.line, next_match.line), entity_line_string_flags);
       String8 match_line = match_line_slice.visible_range_text;
       F32 match_advance = f_dim_from_tag_size_string(code_font, code_font_size, str8_prefix(match_line, next_match.column-1)).x;
@@ -6033,7 +6033,7 @@ DF_VIEW_UI_FUNCTION_DEF(Disassembly)
   if(has_disasm) UI_Parent(container_box)
   {
     //- rjf: build fractional space
-    container_box->view_off.x = view->scroll_pos.x.idx + view->scroll_pos.x.off;
+    container_box->view_off.x = container_box->view_off_target.x = view->scroll_pos.x.idx + view->scroll_pos.x.off;
     container_box->view_off.y = container_box->view_off_target.y = code_line_height*mod_f32(view->scroll_pos.y.off, 1.f) + code_line_height*(view->scroll_pos.y.off < 0) - code_line_height*(view->scroll_pos.y.off == -1.f && view->scroll_pos.y.idx == 1);
     
     //- rjf: build code slice
@@ -6803,7 +6803,7 @@ DF_VIEW_UI_FUNCTION_DEF(Output)
   //- rjf: search query -> matches
   //
   DF_TextSearchMatchArray search_query_matches = {0};
-#if !DE2CTRL
+#if 0
   {
     search_query_matches = df_text_search_match_array_from_entity_needle(scratch.arena, entity, search_query, entity_line_string_flags, tv->cursor);
     df_text_search_match_array_sort_in_place(&search_query_matches);
@@ -6967,7 +6967,7 @@ DF_VIEW_UI_FUNCTION_DEF(Output)
   if(txti_buffer_is_ready) UI_Parent(container_box)
   {
     //- rjf: build fractional space
-    container_box->view_off.x = view->scroll_pos.x.idx + view->scroll_pos.x.off;
+    container_box->view_off.x = container_box->view_off_target.x = view->scroll_pos.x.idx + view->scroll_pos.x.off;
     container_box->view_off.y = container_box->view_off_target.y = code_line_height*mod_f32(view->scroll_pos.y.off, 1.f) + code_line_height*(view->scroll_pos.y.off < 0) - code_line_height*(view->scroll_pos.y.off == -1.f && view->scroll_pos.y.idx == 1);
     
     //- rjf: build code slice
@@ -7030,7 +7030,7 @@ DF_VIEW_UI_FUNCTION_DEF(Output)
     if(search_query.size != 0 && next_match.line != 0)
     {
       // TODO(rjf): [ ] @de2ctrl
-#if !DE2CTRL
+#if 0
       DF_TextSlice match_line_slice = df_text_slice_from_entity(scratch.arena, entity, r1s64(next_match.line, next_match.line), entity_line_string_flags);
       String8 match_line = match_line_slice.visible_range_text;
       F32 match_advance = f_dim_from_tag_size_string(code_font, code_font_size, str8_prefix(match_line, next_match.column-1)).x;
@@ -7316,6 +7316,10 @@ DF_VIEW_UI_FUNCTION_DEF(Memory)
     viz_range_rows.max = clamp_1s64(scroll_idx_rng, viz_range_rows.max);
     viz_range_bytes.min = viz_range_rows.min*mv->num_columns;
     viz_range_bytes.max = (viz_range_rows.max+1)*mv->num_columns+1;
+    if(viz_range_bytes.min > viz_range_bytes.max)
+    {
+      Swap(U64, viz_range_bytes.min, viz_range_bytes.max);
+    }
   }
   
   //////////////////////////////
@@ -7719,7 +7723,7 @@ DF_VIEW_UI_FUNCTION_DEF(Memory)
                                                UI_BoxFlag_AllowOverflowX|
                                                UI_BoxFlag_AllowOverflowY,
                                                "scrollable_box");
-    scrollable_box->view_off.x = view->scroll_pos.x.idx + view->scroll_pos.x.off;
+    container_box->view_off.x = container_box->view_off_target.x = view->scroll_pos.x.idx + view->scroll_pos.x.off;
     scrollable_box->view_off.y = scrollable_box->view_off_target.y = floor_f32(row_height_px*mod_f32(view->scroll_pos.y.off, 1.f) + row_height_px*(view->scroll_pos.y.off < 0));
   }
   

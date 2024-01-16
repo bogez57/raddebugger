@@ -1145,6 +1145,7 @@ df_window_update_and_render(Arena *arena, OS_EventList *events, DF_Window *ws, D
 {
   ProfBeginFunction();
   B32 window_is_focused = os_window_is_focused(ws->os);
+  B32 confirm_open = df_gfx_state->confirm_active;
   B32 hover_eval_is_open = (ws->hover_eval_string.size != 0 && ws->hover_eval_first_frame_idx+20 < ws->hover_eval_last_frame_idx && df_frame_index()-ws->hover_eval_last_frame_idx < 20);
   B32 any_query_is_focused = !df_panel_is_nil(ws->focused_panel) && !df_view_is_nil(df_query_view_from_panel(ws->focused_panel));
   if(!window_is_focused)
@@ -1842,8 +1843,18 @@ df_window_update_and_render(Arena *arena, OS_EventList *events, DF_Window *ws, D
               keep_child->size_pct_of_parent.v[split_axis] *= size_pct_of_parent.v[split_axis];
               keep_child->size_pct_of_parent.v[axis2_flip(split_axis)] *= size_pct_of_parent.v[axis2_flip(split_axis)];
               
+              // rjf: reset focus, if needed
+              if(ws->focused_panel == discard_child)
+              {
+                ws->focused_panel = keep_child;
+                for(DF_Panel *grandchild = ws->focused_panel; !df_panel_is_nil(grandchild); grandchild = grandchild->first)
+                {
+                  ws->focused_panel = grandchild;
+                }
+              }
+              
               // rjf: keep-child split-axis == grandparent split-axis? bubble keep-child up into grandparent's children
-              if(grandparent->split_axis == keep_child->split_axis && !df_panel_is_nil(keep_child->first))
+              if(!df_panel_is_nil(grandparent) && grandparent->split_axis == keep_child->split_axis && !df_panel_is_nil(keep_child->first))
               {
                 df_panel_remove(grandparent, keep_child);
                 DF_Panel *prev = parent_prev;
@@ -1857,16 +1868,6 @@ df_window_update_and_render(Arena *arena, OS_EventList *events, DF_Window *ws, D
                   child->size_pct_of_parent.v[keep_child->split_axis]        *= keep_child->size_pct_of_parent_target.v[grandparent->split_axis];
                 }
                 df_panel_release(ws, keep_child);
-              }
-              
-              // rjf: reset focus, if needed
-              if(ws->focused_panel == discard_child)
-              {
-                ws->focused_panel = keep_child;
-                for(DF_Panel *grandchild = ws->focused_panel; !df_panel_is_nil(grandchild); grandchild = grandchild->first)
-                {
-                  ws->focused_panel = grandchild;
-                }
               }
             }
             // NOTE(rjf): Otherwise we can just remove this child.
@@ -3222,6 +3223,7 @@ df_window_update_and_render(Arena *arena, OS_EventList *events, DF_Window *ws, D
             }
             avg_ui_hash_chain_length = chain_length_sum / chain_count;
           }
+          ui_labelf("Target Hz: %.2f", 1.f/df_dt());
           ui_labelf("Ctrl Run Index: %I64u", ctrl_run_idx());
           ui_labelf("Window %p", window);
           ui_set_next_pref_width(ui_children_sum(1));
@@ -3860,6 +3862,55 @@ df_window_update_and_render(Arena *arena, OS_EventList *events, DF_Window *ws, D
       scratch_end(scratch);
     }
     
+    //- rjf: confirmation popup
+    {
+      if(df_gfx_state->confirm_t > 0.005f) UI_Focus(1) UI_TextAlignment(UI_TextAlign_Center)
+      {
+        Vec2F32 window_dim = dim_2f32(window_rect);
+        UI_Box *bg_box = &ui_g_nil_box;
+        UI_Rect(window_rect) UI_ChildLayoutAxis(Axis2_X)
+        {
+          Vec4F32 bg_color = ui_top_background_color();
+          bg_color.w *= df_gfx_state->confirm_t;
+          ui_set_next_blur_size(10*df_gfx_state->confirm_t);
+          ui_set_next_background_color(bg_color);
+          bg_box = ui_build_box_from_stringf(UI_BoxFlag_FixedSize|UI_BoxFlag_Floating|UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_DefaultFocusNav|UI_BoxFlag_DrawBackgroundBlur|UI_BoxFlag_DrawBackground, "###confirm_popup_%p", ws);
+        }
+        if(df_gfx_state->confirm_active) UI_Parent(bg_box)
+        {
+          ui_ctx_menu_close();
+          UI_WidthFill UI_PrefHeight(ui_children_sum(1.f)) UI_Column UI_Padding(ui_pct(1, 0))
+          {
+            UI_FontSize(ui_top_font_size()*2.f) UI_PrefHeight(ui_em(3.f, 1.f)) ui_label(df_gfx_state->confirm_title);
+            UI_PrefHeight(ui_em(3.f, 1.f)) UI_TextColor(df_rgba_from_theme_color(DF_ThemeColor_WeakText)) ui_label(df_gfx_state->confirm_msg);
+            ui_spacer(ui_em(1.5f, 1.f));
+            UI_Row UI_Padding(ui_pct(1.f, 0.f)) UI_WidthFill UI_PrefHeight(ui_em(5.f, 1.f))
+            {
+              UI_CornerRadius00(ui_top_font_size()*0.25f)
+                UI_CornerRadius01(ui_top_font_size()*0.25f)
+                if(ui_buttonf("Cancel").clicked || os_key_press(ui_events(), ui_window(), 0, OS_Key_Esc))
+              {
+                DF_CmdParams p = df_cmd_params_zero();
+                df_push_cmd__root(&p, df_cmd_spec_from_core_cmd_kind(DF_CoreCmdKind_ConfirmCancel));
+              }
+              UI_CornerRadius10(ui_top_font_size()*0.25f)
+                UI_CornerRadius11(ui_top_font_size()*0.25f)
+                UI_BackgroundColor(df_rgba_from_theme_color(DF_ThemeColor_ActionBackground))
+                UI_TextColor(df_rgba_from_theme_color(DF_ThemeColor_ActionText))
+                UI_BorderColor(df_rgba_from_theme_color(DF_ThemeColor_ActionBorder))
+                if(ui_buttonf("OK").clicked || os_key_press(ui_events(), ui_window(), 0, OS_Key_Return))
+              {
+                DF_CmdParams p = df_cmd_params_zero();
+                df_push_cmd__root(&p, df_cmd_spec_from_core_cmd_kind(DF_CoreCmdKind_ConfirmAccept));
+              }
+            }
+            ui_spacer(ui_em(3.f, 1.f));
+          }
+        }
+        ui_signal_from_box(bg_box);
+      }
+    }
+    
     //- rjf: build auto-complete lister
     ProfScope("build autocomplete lister")
       if(!ws->autocomp_force_closed && !ui_key_match(ws->autocomp_root_key, ui_key_zero()) && ws->autocomp_last_frame_idx+1 >= df_frame_index())
@@ -4333,7 +4384,6 @@ df_window_update_and_render(Arena *arena, OS_EventList *events, DF_Window *ws, D
           {
             DF_CoreCmdKind cmds[] =
             {
-              DF_CoreCmdKind_Commands,
               DF_CoreCmdKind_Targets,
               DF_CoreCmdKind_Scheduler,
               DF_CoreCmdKind_CallStack,
@@ -4352,7 +4402,6 @@ df_window_update_and_render(Arena *arena, OS_EventList *events, DF_Window *ws, D
             };
             U32 codepoints[] =
             {
-              'c',
               't',
               's',
               'k',
@@ -4454,9 +4503,23 @@ df_window_update_and_render(Arena *arena, OS_EventList *events, DF_Window *ws, D
           UI_Key help_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_help_menu_key_"));
           UI_CtxMenu(help_menu_key) UI_PrefWidth(ui_em(40.f, 1.f))
           {
-            ui_label(str8_lit_comp(RADDBG_TITLE_STRING_LITERAL));
-            ui_spacer(ui_em(0.75f, 1.f));
-            ui_label_multiline(ui_top_font_size()*40.f, str8_lit("If you run into issues, please submit them to the GitHub at:"));
+            UI_Row UI_TextAlignment(UI_TextAlign_Center) UI_TextColor(df_rgba_from_theme_color(DF_ThemeColor_WeakText))
+              ui_label(str8_lit(RADDBG_TITLE_STRING_LITERAL));
+            ui_spacer(ui_em(0.25f, 1.f));
+            UI_Row
+              UI_PrefWidth(ui_text_dim(10, 1))
+              UI_TextAlignment(UI_TextAlign_Center)
+              UI_Padding(ui_pct(1, 0))
+            {
+              ui_labelf("Search for commands by pressing ");
+              DF_CmdSpec *spec = df_cmd_spec_from_core_cmd_kind(DF_CoreCmdKind_Commands);
+              UI_TextColor(df_rgba_from_theme_color(DF_ThemeColor_PlainText))
+                UI_Flags(UI_BoxFlag_DrawBorder)
+                UI_TextAlignment(UI_TextAlign_Center)
+                df_cmd_binding_button(spec);
+            }
+            ui_spacer(ui_em(0.25f, 1.f));
+            UI_Row UI_TextAlignment(UI_TextAlign_Center) ui_label(str8_lit("Submit issues to the GitHub at:"));
             UI_TextAlignment(UI_TextAlign_Center)
             {
               UI_Signal url_sig = ui_buttonf("github.com/EpicGames/raddebugger");
@@ -4927,7 +4990,8 @@ df_window_update_and_render(Arena *arena, OS_EventList *events, DF_Window *ws, D
                   }break;
                   case CTRL_EventCause_InterruptedByTrap:
                   {
-                    
+                    icon = DF_IconKind_WarningBig;
+                    explanation = push_str8f(scratch.arena, "%S interrupted by trap - 0x%x", thread_display_string, stop_event.exception_code);
                   }break;
                   case CTRL_EventCause_InterruptedByHalt:
                   {
@@ -7541,7 +7605,7 @@ df_text_search_thread_entry_point(void *p)
 {
   TCTX tctx_;
   tctx_init_and_equip(&tctx_);
-#if !DE2CTRL
+#if 0
   // TODO(rjf): [ ] @de2ctrl text searcher -- wound up in DE_Hash
   
   //- rjf: types
@@ -7734,84 +7798,6 @@ df_text_search_thread_entry_point(void *p)
     scratch_end(scratch);
   }
 #endif
-}
-
-internal DF_TextSearchMatchArray
-df_text_search_match_array_from_hash_needle(Arena *arena, U128 hash, String8 needle, DF_TextSliceFlags text_slice_flags, TxtPt start_pt)
-{
-  // TODO(rjf): [ ] @de2ctrl text searching lookup -- wound up with DE_Hash
-  DF_TextSearchMatchArray result = {0};
-  {
-    //- rjf: hash -> slot/stripe info
-    U64 little_hash              = df_text_search_little_hash_from_hash(hash);
-    U64 slot_idx                 = little_hash%df_gfx_state->tsrch_slot_count;
-    DF_TextSearchCacheSlot *slot = &df_gfx_state->tsrch_slots[slot_idx];
-    U64 stripe_idx               = slot_idx%df_gfx_state->tsrch_stripe_count;
-    OS_Handle stripe_rw_mutex    = df_gfx_state->tsrch_stripe_rw_mutexes[stripe_idx];
-    
-    //- rjf: find matches from existing node
-    B32 found_node = 0;
-    {
-      os_rw_mutex_take_r(stripe_rw_mutex);
-      for(DF_TextSearchCacheNode *node = slot->first; node != 0; node = node->next)
-      {
-        if(MemoryMatchStruct(&node->hash, &hash) &&
-           str8_match(node->needle, needle, StringMatchFlag_CaseInsensitive) &&
-           node->flags == text_slice_flags)
-        {
-          found_node = 1;
-          result = df_text_search_match_array_from_chunk_list(arena, &node->search_matches);
-          U64 time_current_us = os_now_microseconds();
-          ins_atomic_u64_eval_assign(&node->last_time_touched_us, time_current_us);
-          break;
-        }
-      }
-      os_rw_mutex_drop_r(stripe_rw_mutex);
-    }
-    
-    //- rjf: no existing node -> allocate new
-    if(found_node == 0)
-    {
-      os_rw_mutex_take_w(stripe_rw_mutex);
-      {
-        Arena *node_arena = arena_alloc();
-        DF_TextSearchCacheNode *node = push_array(node_arena, DF_TextSearchCacheNode, 1);
-        node->arena = node_arena;
-        node->hash = hash;
-        node->needle = push_str8_copy(node_arena, needle);
-        node->flags = text_slice_flags;
-        node->start_pt = start_pt;
-        DLLPushBack(slot->first, slot->last, node);
-      }
-      os_rw_mutex_drop_w(stripe_rw_mutex);
-      os_condition_variable_signal(df_gfx_state->tsrch_wakeup_cv);
-    }
-  }
-  return result;
-}
-
-internal DF_TextSearchMatchArray
-df_text_search_match_array_from_entity_needle(Arena *arena, DF_Entity *entity, String8 needle, DF_TextSliceFlags flags, TxtPt start_pt)
-{
-  // TODO(rjf): [ ] @de2ctrl text search lookup
-  DF_TextSearchMatchArray matches = {0};
-#if !DE2CTRL
-  if(entity->kind == DF_EntityKind_File && needle.size != 0)
-  {
-    Temp scratch = scratch_begin(&arena, 1);
-    String8 path = df_full_path_from_entity(scratch.arena, entity);
-    DE_PipelineHint hint = zero_struct;
-    DE_Key path2hash_key = de_key_path(DE_KeyFunc_HashFromPath, path, entity->timestamp);
-    DE_Val *path2hash_val = de_user_peek_lookup(de_user, de_shared, &hint, &path2hash_key);
-    DE_Hash hash = path2hash_val->hash;
-    if(!de_hash_is_empty(&hash))
-    {
-      matches = df_text_search_match_array_from_hash_needle(arena, hash, needle, flags, start_pt);
-    }
-    scratch_end(scratch);
-  }
-#endif
-  return matches;
 }
 
 internal int
@@ -8304,17 +8290,11 @@ df_cfg_strings_from_gfx(Arena *arena, String8 root_path, DF_CfgSrc source)
   //- rjf: serialize fonts
   if(source == DF_CfgSrc_User)
   {
-    String8 code_font_path_absolute = f_path_from_tag(df_gfx_state->cfg_font_tags[DF_FontSlot_Code]);
-    String8 main_font_path_absolute = f_path_from_tag(df_gfx_state->cfg_font_tags[DF_FontSlot_Main]);
-    String8 code_font_path_relative = path_relative_dst_from_absolute_dst_src(arena, code_font_path_absolute, root_path);
-    String8 main_font_path_relative = path_relative_dst_from_absolute_dst_src(arena, main_font_path_absolute, root_path);
-    {
-      str8_list_push(arena, &strs, str8_lit("/// fonts /////////////////////////////////////////////////////////////////////\n"));
-      str8_list_push(arena, &strs, str8_lit("\n"));
-      str8_list_pushf(arena, &strs, "code_font: \"%S\"\n", code_font_path_relative);
-      str8_list_pushf(arena, &strs, "main_font: \"%S\"\n", main_font_path_relative);
-      str8_list_push(arena, &strs, str8_lit("\n"));
-    }
+    str8_list_push(arena, &strs, str8_lit("/// fonts /////////////////////////////////////////////////////////////////////\n"));
+    str8_list_push(arena, &strs, str8_lit("\n"));
+    str8_list_pushf(arena, &strs, "code_font: \"%S\"\n", df_gfx_state->cfg_code_font_path);
+    str8_list_pushf(arena, &strs, "main_font: \"%S\"\n", df_gfx_state->cfg_main_font_path);
+    str8_list_push(arena, &strs, str8_lit("\n"));
   }
   
   ProfEnd();
@@ -10969,6 +10949,7 @@ df_gfx_init(OS_WindowRepaintFunctionType *window_repaint_entry_point, DF_StateDe
   df_gfx_state->num_frames_requested = 2;
   df_gfx_state->hist = hist;
   df_gfx_state->key_map_arena = arena_alloc();
+  df_gfx_state->confirm_arena = arena_alloc();
   df_gfx_state->view_spec_table_size = 256;
   df_gfx_state->view_spec_table = push_array(arena, DF_ViewSpec *, df_gfx_state->view_spec_table_size);
   df_gfx_state->view_rule_spec_table_size = 1024;
@@ -10979,6 +10960,8 @@ df_gfx_init(OS_WindowRepaintFunctionType *window_repaint_entry_point, DF_StateDe
   df_gfx_state->cmd2view_slots = push_array(arena, DF_String2ViewSlot, df_gfx_state->cmd2view_slot_count);
   df_gfx_state->string_search_arena = arena_alloc();
   df_gfx_state->repaint_hook = window_repaint_entry_point;
+  df_gfx_state->cfg_main_font_path_arena = arena_alloc();
+  df_gfx_state->cfg_code_font_path_arena = arena_alloc();
   df_clear_bindings();
   
   // rjf: register gfx layer views
@@ -11001,20 +10984,6 @@ df_gfx_init(OS_WindowRepaintFunctionType *window_repaint_entry_point, DF_StateDe
     }
   }
   
-  // rjf: set up background text searching thread
-  {
-    df_gfx_state->tsrch_slot_count = 64;
-    df_gfx_state->tsrch_stripe_count = df_gfx_state->tsrch_slot_count/8;
-    df_gfx_state->tsrch_slots = push_array(df_gfx_state->arena, DF_TextSearchCacheSlot, df_gfx_state->tsrch_slot_count);
-    df_gfx_state->tsrch_stripe_rw_mutexes = push_array(df_gfx_state->arena, OS_Handle, df_gfx_state->tsrch_stripe_count);
-    for(U64 stripe_idx = 0; stripe_idx < df_gfx_state->tsrch_stripe_count; stripe_idx += 1)
-    {
-      df_gfx_state->tsrch_stripe_rw_mutexes[stripe_idx] = os_rw_mutex_alloc();
-    }
-    df_gfx_state->tsrch_wakeup_mutex = os_mutex_alloc();
-    df_gfx_state->tsrch_wakeup_cv = os_condition_variable_alloc();
-    //df_gfx_state->tsrch_thread = os_launch_thread(df_text_search_thread_entry_point, 0, 0);
-  }
   ProfEnd();
 }
 
@@ -11024,6 +10993,17 @@ df_gfx_begin_frame(Arena *arena, DF_CmdList *cmds)
   ProfBeginFunction();
   arena_clear(df_gfx_state->frame_arena);
   df_gfx_state->hover_line_set_this_frame = 0;
+  
+  //- rjf: animate confirmation
+  {
+    F32 rate = 1 - pow_f32(2, (-10.f * df_dt()));
+    B32 confirm_open = df_gfx_state->confirm_active;
+    df_gfx_state->confirm_t += rate * ((F32)!!confirm_open-df_gfx_state->confirm_t);
+    if(abs_f32(df_gfx_state->confirm_t - (F32)!!confirm_open) > 0.005f)
+    {
+      df_gfx_request_frame();
+    }
+  }
   
   //- rjf: capture is active? -> keep rendering
   if(ProfIsCapturing())
@@ -11085,10 +11065,32 @@ df_gfx_begin_frame(Arena *arena, DF_CmdList *cmds)
           DF_Window *ws = df_window_from_handle(params.window);
           if(ws != 0)
           {
+            DF_EntityList running_processes = df_query_cached_entity_list_with_kind(DF_EntityKind_Process);
+            
+            // NOTE(rjf): if this is the last window, and targets are running, but
+            // this command is not force-confirmed, then we should query the user
+            // to ensure they want to close the debugger before exiting
+            UI_Key key = ui_key_from_string(ui_key_zero(), str8_lit("lossy_exit_confirmation"));
+            if(!ui_key_match(key, df_gfx_state->confirm_key) && running_processes.count != 0 && ws == df_gfx_state->first_window && ws == df_gfx_state->last_window && !params.force_confirm)
+            {
+              df_gfx_state->confirm_key = key;
+              df_gfx_state->confirm_active = 1;
+              arena_clear(df_gfx_state->confirm_arena);
+              MemoryZeroStruct(&df_gfx_state->confirm_cmds);
+              df_gfx_state->confirm_title = push_str8f(df_gfx_state->confirm_arena, "Are you sure you want to exit?");
+              df_gfx_state->confirm_msg = push_str8f(df_gfx_state->confirm_arena, "The debugger is still attached to %slive process%s.",
+                                                     running_processes.count == 1 ? "a " : "",
+                                                     running_processes.count == 1 ? ""   : "es");
+              DF_CmdParams p = df_cmd_params_from_window(ws);
+              p.force_confirm = 1;
+              df_cmd_params_mark_slot(&p, DF_CmdParamSlot_ForceConfirm);
+              df_cmd_list_push(df_gfx_state->confirm_arena, &df_gfx_state->confirm_cmds, &p, df_cmd_spec_from_core_cmd_kind(DF_CoreCmdKind_CloseWindow));
+            }
+            
             // NOTE(rjf): if this is the last window, and it is being closed, then
             // we need to auto-save, and provide one last chance to process saving
             // commands. after doing so, we can retry.
-            if(ws == df_gfx_state->first_window && ws == df_gfx_state->last_window && df_gfx_state->last_window_queued_save == 0)
+            else if(ws == df_gfx_state->first_window && ws == df_gfx_state->last_window && df_gfx_state->last_window_queued_save == 0)
             {
               df_gfx_state->last_window_queued_save = 1;
               {
@@ -11128,6 +11130,22 @@ df_gfx_begin_frame(Arena *arena, DF_CmdList *cmds)
           {
             os_window_set_fullscreen(window->os, !os_window_is_fullscreen(window->os));
           }
+        }break;
+        
+        //- rjf: confirmations
+        case DF_CoreCmdKind_ConfirmAccept:
+        {
+          df_gfx_state->confirm_active = 0;
+          df_gfx_state->confirm_key = ui_key_zero();
+          for(DF_CmdNode *n = df_gfx_state->confirm_cmds.first; n != 0; n = n->next)
+          {
+            df_push_cmd__root(&n->cmd.params, n->cmd.spec);
+          }
+        }break;
+        case DF_CoreCmdKind_ConfirmCancel:
+        {
+          df_gfx_state->confirm_active = 0;
+          df_gfx_state->confirm_key = ui_key_zero();
         }break;
         
         //- rjf: commands with implications for graphical systems, but generated
@@ -11205,13 +11223,7 @@ df_gfx_begin_frame(Arena *arena, DF_CmdList *cmds)
               f_tag_from_static_data_string(&df_g_default_code_font_bytes),
               f_tag_from_static_data_string(&df_g_icon_font_bytes),
             };
-            for(DF_FontSlot slot = (DF_FontSlot)0; slot < DF_FontSlot_COUNT; slot = (DF_FontSlot)(slot+1))
-            {
-              if(f_tag_match(f_tag_zero(), df_gfx_state->cfg_font_tags[slot]))
-              {
-                df_gfx_state->cfg_font_tags[slot] = defaults[slot];
-              }
-            }
+            MemoryZeroArray(df_gfx_state->cfg_font_tags);
             {
               DF_CfgVal *code_font_val = df_cfg_val_from_string(table, str8_lit("code_font"));
               DF_CfgVal *main_font_val = df_cfg_val_from_string(table, str8_lit("main_font"));
@@ -11219,15 +11231,32 @@ df_gfx_begin_frame(Arena *arena, DF_CmdList *cmds)
               DF_CfgNode *main_font_cfg = main_font_val->last;
               String8 code_font_relative_path = code_font_cfg->first->string;
               String8 main_font_relative_path = main_font_cfg->first->string;
+              if(code_font_cfg != &df_g_nil_cfg_node)
+              {
+                arena_clear(df_gfx_state->cfg_code_font_path_arena);
+                df_gfx_state->cfg_code_font_path = push_str8_copy(df_gfx_state->cfg_code_font_path_arena, code_font_relative_path);
+              }
+              if(main_font_cfg != &df_g_nil_cfg_node)
+              {
+                arena_clear(df_gfx_state->cfg_main_font_path_arena);
+                df_gfx_state->cfg_main_font_path = push_str8_copy(df_gfx_state->cfg_main_font_path_arena, main_font_relative_path);
+              }
               String8 code_font_path = path_absolute_dst_from_relative_dst_src(scratch.arena, code_font_relative_path, cfg_folder);
               String8 main_font_path = path_absolute_dst_from_relative_dst_src(scratch.arena, main_font_relative_path, cfg_folder);
-              if(code_font_cfg != &df_g_nil_cfg_node && code_font_relative_path.size != 0)
+              if(os_file_path_exists(code_font_path) && code_font_cfg != &df_g_nil_cfg_node && code_font_relative_path.size != 0)
               {
                 df_gfx_state->cfg_font_tags[DF_FontSlot_Code] = f_tag_from_path(code_font_path);
               }
-              if(main_font_cfg != &df_g_nil_cfg_node && main_font_relative_path.size != 0)
+              if(os_file_path_exists(main_font_path) && main_font_cfg != &df_g_nil_cfg_node && main_font_relative_path.size != 0)
               {
                 df_gfx_state->cfg_font_tags[DF_FontSlot_Main] = f_tag_from_path(main_font_path);
+              }
+            }
+            for(DF_FontSlot slot = (DF_FontSlot)0; slot < DF_FontSlot_COUNT; slot = (DF_FontSlot)(slot+1))
+            {
+              if(f_tag_match(f_tag_zero(), df_gfx_state->cfg_font_tags[slot]))
+              {
+                df_gfx_state->cfg_font_tags[slot] = defaults[slot];
               }
             }
           }
@@ -11506,7 +11535,10 @@ df_gfx_begin_frame(Arena *arena, DF_CmdList *cmds)
           }
           
           //- rjf: apply keybindings
-          df_clear_bindings();
+          if(src == DF_CfgSrc_User)
+          {
+            df_clear_bindings();
+          }
           DF_CfgVal *keybindings = df_cfg_val_from_string(table, str8_lit("keybindings"));
           for(DF_CfgNode *keybinding_set = keybindings->first;
               keybinding_set != &df_g_nil_cfg_node;
@@ -11601,8 +11633,27 @@ df_gfx_begin_frame(Arena *arena, DF_CmdList *cmds)
             }
           }
           
+          //- rjf: if theme colors are all zeroes, then set to default - config appears busted
+          {
+            B32 all_colors_are_zero = 1;
+            Vec4F32 zero_color = {0};
+            for(DF_ThemeColor c = (DF_ThemeColor)(DF_ThemeColor_Null+1); c < DF_ThemeColor_COUNT; c = (DF_ThemeColor)(c+1))
+            {
+              if(!MemoryMatchStruct(&df_gfx_state->cfg_theme_target.colors[c], &zero_color))
+              {
+                all_colors_are_zero = 0;
+                break;
+              }
+            }
+            if(all_colors_are_zero)
+            {
+              MemoryCopy(df_gfx_state->cfg_theme_target.colors, df_g_theme_preset_colors__default_dark, sizeof(df_g_theme_preset_colors__default_dark));
+              MemoryCopy(df_gfx_state->cfg_theme.colors, df_g_theme_preset_colors__default_dark, sizeof(df_g_theme_preset_colors__default_dark));
+            }
+          }
+          
           //- rjf: if config opened 0 windows, we need to do some sensible default
-          if(df_gfx_state->first_window == 0)
+          if(src == DF_CfgSrc_User && windows->first == &df_g_nil_cfg_node)
           {
             OS_Handle preferred_monitor = os_primary_monitor();
             Vec2F32 monitor_dim = os_dim_from_monitor(preferred_monitor);
@@ -11613,7 +11664,7 @@ df_gfx_begin_frame(Arena *arena, DF_CmdList *cmds)
           }
           
           //- rjf: if config bound 0 keys, we need to do some sensible default
-          if(df_gfx_state->key_map_total_count == 0)
+          if(src == DF_CfgSrc_User && df_gfx_state->key_map_total_count == 0)
           {
             for(U64 idx = 0; idx < ArrayCount(df_g_default_binding_table); idx += 1)
             {
